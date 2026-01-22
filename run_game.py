@@ -13,7 +13,7 @@ from board_setup import (
 from card_setup import market_setup as card_market_setup
 import create_use_resources as res
 from game_engine import GameEngine
-from player_strategies import RandomStrategy, GreedyStrategy, ConservativeStrategy, BalancedStrategy
+from player_strategies import RandomStrategy, GreedyStrategy, ConservativeStrategy, BalancedStrategy, MyStrategy
 
 # Europe color connections
 eur_areas = [('brown', 'red'), ('brown', 'purple'), ('brown', 'yellow'), ('brown', 'green'), 
@@ -169,14 +169,9 @@ def setup_game(num_players=4, random_seed=None):
     return players, current_market, future_market, remaining_deck, board_graph, resources, player_order
 
 
-def main():
-    """Run a game with 4 test players"""
-    print("=" * 60)
-    print("Power Grid Simulation")
-    print("=" * 60)
-    
-    num_players = 4
-    random_seed = 50  # For reproducibility
+def run_single_game(num_players, strategies, strategy_names, verbose=True, enable_logging=False):
+    """Run a single game and return winner and final stats"""
+    random_seed = random.randint(1, 10000)
     
     # Setup game
     players, current_market, future_market, deck, board_graph, resources, player_order = setup_game(
@@ -184,22 +179,11 @@ def main():
     )
 
     # Assign strategies to players
-    strategies = [
-        RandomStrategy(),
-        GreedyStrategy(),
-        ConservativeStrategy(),
-        BalancedStrategy()
-    ]
-
-    strategy_names = ['Random Strategy', 'Greedy Strategy', 'Conservative Strategy', 'Balanced Strategy']
-
     for i, (player, strategy) in enumerate(zip(players, strategies)):
         player.strategy = strategy
         player.name = f'Player_{i} ({strategy_names[i]})'
 
-    print(f"\nPlayers: {', '.join([f'P{i}: {strategy_names[i]}' for i in range(num_players)])}\n")
-
-    # Create game engine with logging enabled
+    # Create game engine
     engine = GameEngine(
         players=players,
         current_market=current_market,
@@ -209,17 +193,125 @@ def main():
         resources=resources,
         player_order=player_order,
         num_players=num_players,
-        enable_logging=True,  # Enable game state logging
-        game_id=None,  # Will auto-generate
-        log_file="power_grid_game_log.json"  # Output file
+        enable_logging=enable_logging,
+        game_id=None,
+        log_file="power_grid_game_log.json"
     )
 
-    # Run game (strategies now assigned to players)
-    winner = engine.run_game(verbose=True)
+    # Run game
+    winner = engine.run_game(verbose=verbose)
 
-    print(f"\n{'='*60}")
-    print(f"Game finished! Winner: Player {winner} ({strategy_names[winner]})")
-    print(f"{'='*60}")
+    # Get final stats for all players
+    final_stats = []
+    for player_idx, player in enumerate(engine.players):
+        cities_powered = engine.calculate_cities_powered(player)
+        cities_connected = len(player.generators)
+        money = player.money
+        final_stats.append({
+            'winner': (player_idx == winner),
+            'cities_powered': cities_powered,
+            'cities_connected': cities_connected,
+            'money': money
+        })
+
+    return winner, final_stats
+
+
+def main():
+    """Run games with 4 test players - single game or tournament mode"""
+    import sys
+    
+    # Check if tournament mode requested
+    num_games = 1
+    if len(sys.argv) > 1:
+        try:
+            num_games = int(sys.argv[1])
+            if num_games < 1 or num_games > 500:
+                print("Error: Number of games must be between 1 and 500")
+                return
+        except ValueError:
+            print("Error: Number of games must be an integer")
+            return
+    
+    num_players = 4
+    
+    # Define strategies (same for all games)
+    strategies = [
+        MyStrategy(),
+        BalancedStrategy(),
+        MyStrategy(),
+        BalancedStrategy()
+    ]
+
+    strategy_names = ['my strategy 1', 'Balanced Strategy', 'My Strategy 2', 'Balanced Strategy']
+
+    if num_games == 1:
+        # Single game mode - verbose output
+        print("=" * 60)
+        print("Power Grid Simulation")
+        print("=" * 60)
+        print(f"\nPlayers: {', '.join([f'P{i}: {strategy_names[i]}' for i in range(num_players)])}\n")
+        
+        winner, final_stats = run_single_game(
+            num_players, strategies, strategy_names, 
+            verbose=True, enable_logging=True
+        )
+        
+        print(f"\n{'='*60}")
+        print(f"Game finished! Winner: Player {winner} ({strategy_names[winner]})")
+        print(f"{'='*60}")
+    else:
+        # Tournament mode - suppress output
+        print("=" * 60)
+        print(f"Power Grid Tournament - Running {num_games} games")
+        print("=" * 60)
+        print(f"Players: {', '.join([f'P{i}: {strategy_names[i]}' for i in range(num_players)])}\n")
+        
+        # Initialize statistics
+        stats = {
+            i: {
+                'wins': 0,
+                'total_cities_powered': 0,
+                'total_cities_connected': 0,
+                'total_money': 0
+            }
+            for i in range(num_players)
+        }
+        
+        # Run games
+        for game_num in range(1, num_games + 1):
+            if game_num % 50 == 0 or game_num == 1:
+                print(f"Running game {game_num}/{num_games}...", end='\r')
+            
+            winner, final_stats = run_single_game(
+                num_players, strategies, strategy_names,
+                verbose=False, enable_logging=False
+            )
+            
+            # Update statistics
+            for player_idx, player_stats in enumerate(final_stats):
+                stats[player_idx]['wins'] += 1 if player_stats['winner'] else 0
+                stats[player_idx]['total_cities_powered'] += player_stats['cities_powered']
+                stats[player_idx]['total_cities_connected'] += player_stats['cities_connected']
+                stats[player_idx]['total_money'] += player_stats['money']
+        
+        print(f"Completed {num_games} games" + " " * 20)  # Clear the progress line
+        
+        # Calculate and display averages
+        print("\n" + "=" * 60)
+        print("Final Average Scores:")
+        print("=" * 60)
+        
+        for player_idx in range(num_players):
+            wins = stats[player_idx]['wins']
+            avg_cities_powered = stats[player_idx]['total_cities_powered'] / num_games
+            avg_cities_connected = stats[player_idx]['total_cities_connected'] / num_games
+            avg_money = stats[player_idx]['total_money'] / num_games
+            
+            print(f"Player {player_idx}: {wins:3d} wins {avg_cities_powered:.0f} cities powered, "
+                  f"{avg_cities_connected:.0f} cities connected, {avg_money:.0f}E")
+        
+        print("=" * 60)
 
 
 if __name__ == '__main__':

@@ -177,9 +177,9 @@ class GameEngine:
             if self.enable_logging:
                 self.logger.log_state(self.game_state, description=f"round_{self.game_state.round_num}_after_build")
 
-            # Check for end game after building
-            if self.check_end_game():
-                if self.enable_logging:
+            # Check for end game after building (game may have ended during build phase)
+            if self.game_state.game_over or self.check_end_game():
+                if self.enable_logging and not self.game_state.game_over:
                     self.logger.log_state(self.game_state, description="game_end_condition_triggered")
                 break
 
@@ -226,7 +226,14 @@ class GameEngine:
         return winner_idx
     
     def phase_1_determine_order(self):
-        """Phase 1: Determine player order based on cities connected"""
+        """Phase 1: Determine player order based on cities connected
+        
+        If all players have the same number of cities and plants (e.g., first round),
+        the order remains as set (preserving initial random order).
+        Once players have different cities/plants, order is determined by:
+        - Most cities (descending)
+        - Largest plant as tie-breaker (descending)
+        """
         # Sort by cities connected (descending), then by largest plant (descending)
         def sort_key(player_idx):
             player = self.players[player_idx]
@@ -234,7 +241,14 @@ class GameEngine:
             largest_plant = max([card.cost for card in player.cards] if player.cards else [0])
             return (-cities_count, -largest_plant)  # Negative for descending
         
-        self.game_state.player_order = sorted(self.game_state.player_order, key=sort_key)
+        # Only sort if players have different city/plant counts
+        # This preserves initial random order when everyone starts equal
+        player_keys = [sort_key(p) for p in self.game_state.player_order]
+        if len(set(player_keys)) > 1:
+            # Players have different cities/plants, so sort them
+            self.game_state.player_order = sorted(self.game_state.player_order, key=sort_key)
+        # Otherwise, keep the current order (which should be random from initial setup)
+        
         self.game_state.phase = 'auction'
     
     def phase_2_auction(self, verbose):
@@ -360,6 +374,7 @@ class GameEngine:
             print(f"  Active bidders: {active_bidders}")
 
         # Bidding loop - go through players in order until only one remains
+        previous_winner = None  # Track previous winner to add them back when outbid
         while len(active_bidders) > 0:
             made_bid = False
 
@@ -390,14 +405,32 @@ class GameEngine:
                 new_bid = bid_action.bid
                 new_discard = bid_action.discard
 
+                # If someone else is outbidding the current winner, add previous winner back
+                # to active_bidders (they can bid again now)
+                if current_winner is not None and current_winner != player_idx:
+                    previous_winner = current_winner
+                    # Add previous winner back if they're still eligible
+                    if (previous_winner not in players_who_passed and 
+                        previous_winner in eligible_players and
+                        previous_winner not in active_bidders):
+                        active_bidders.append(previous_winner)
+                        # Sort to maintain player order
+                        active_bidders.sort(key=lambda x: eligible_players.index(x))
+
                 current_bid = new_bid
                 current_winner = player_idx
                 current_discard = new_discard
                 made_bid = True
 
+                # Remove current winner from active_bidders - they cannot bid again
+                # in this round until someone else outbids them
+                if current_winner in active_bidders:
+                    active_bidders.remove(current_winner)
+
                 # Update auction state
                 self.game_state.auction_current_bid = current_bid
                 self.game_state.auction_current_winner = current_winner
+                self.game_state.auction_active_bidders = list(active_bidders)
 
                 # Log bid
                 if self.enable_logging:
@@ -575,6 +608,23 @@ class GameEngine:
                 continue
 
         # Max retries exceeded
+        # If first round and player tried to pass, force them to buy a plant
+        if is_first_round and last_error == "Cannot pass in first round":
+            # Force player to buy the cheapest available plant
+            if self.game_state.current_market:
+                cheapest_plant = min(self.game_state.current_market, key=lambda c: c.cost)
+                min_bid = cheapest_plant.cost
+                # Check if player can afford it
+                if player.money >= min_bid:
+                    if verbose:
+                        print(f"  Player {player_idx}: Forced to buy plant {cheapest_plant.cost} (cannot pass in first round)")
+                    return PlayerAction.auction_open(cheapest_plant, min_bid)
+                else:
+                    # Player can't afford cheapest plant - this is a real problem
+                    raise Exception(f"Player {player_idx} cannot afford any plant in first round (has {player.money}E, cheapest plant is {min_bid}E)")
+            else:
+                raise Exception(f"Player {player_idx} must buy a plant in first round, but no plants available")
+        
         raise Exception(f"Player {player_idx} failed to provide valid action after {max_retries} attempts. Last error: {last_error}")
 
     def get_validated_auction_bid(self, player_idx, plant, current_bid, current_winner, min_bid, verbose, max_retries=10):
@@ -931,6 +981,15 @@ class GameEngine:
                             if self.enable_logging:
                                 self.logger.log_state(self.game_state,
                                     description=f"round_{self.game_state.round_num}_player_{player_idx}_built_in_{city_name}")
+
+                            # Check if game should end immediately (player reached 18 cities)
+                            if len(player.generators) >= 17:
+                                if verbose:
+                                    print(f"\nPlayer {player_idx} reached 18 cities! Game ending immediately.")
+                                if self.enable_logging:
+                                    self.logger.log_state(self.game_state, description="game_end_condition_triggered")
+                                self.game_state.game_over = True
+                                return  # End build phase immediately
 
                         # Check if any plant should be removed (plant number <= cities)
                         self.remove_plants_below_city_count(player_idx)

@@ -3,7 +3,7 @@ import json
 from card import Card
 
 
-number_of_players = 5
+number_of_players = 4
 with open('config.json', 'r') as f:
     config = json.load(f)
 
