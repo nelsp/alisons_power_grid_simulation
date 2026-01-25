@@ -4,6 +4,8 @@ Main game runner for Power Grid simulation
 
 import random
 import json
+from itertools import combinations
+from datetime import datetime
 from card import Card
 from Player_class import Player
 from board_setup import (
@@ -13,8 +15,7 @@ from board_setup import (
 from card_setup import market_setup as card_market_setup
 import create_use_resources as res
 from game_engine import GameEngine
-from player_strategies import RandomStrategy, GreedyStrategy, ConservativeStrategy, BalancedStrategy, MyStrategy
-
+from player_strategies import RandomStrategy, GreedyStrategy, ConservativeStrategy, BalancedStrategy, MyStrategy, TestStrategy, OptimalStrategy, PowerGridMasterStrategy, MyMightyStrategy, SmartTriggerStrategy
 # Europe color connections
 eur_areas = [('brown', 'red'), ('brown', 'purple'), ('brown', 'yellow'), ('brown', 'green'), 
              ('brown', 'orange'), ('purple', 'red'), ('red', 'yellow'), ('yellow', 'blue'), 
@@ -198,8 +199,8 @@ def run_single_game(num_players, strategies, strategy_names, verbose=True, enabl
         log_file="power_grid_game_log.json"
     )
 
-    # Run game
-    winner = engine.run_game(verbose=verbose)
+    # Run game (max_rounds=25 so games can reach 17 cities before hitting cap)
+    winner = engine.run_game(verbose=verbose, max_rounds=35)
 
     # Get final stats for all players
     final_stats = []
@@ -217,35 +218,236 @@ def run_single_game(num_players, strategies, strategy_names, verbose=True, enabl
     return winner, final_stats
 
 
+def select_strategies(num_strategies=4):
+    """Prompt user to select strategies from available options"""
+    # Define available strategies with their display names
+    available_strategies = {
+        '1': ('RandomStrategy', 'Random Strategy', RandomStrategy),
+        '2': ('GreedyStrategy', 'Greedy Strategy', GreedyStrategy),
+        '3': ('ConservativeStrategy', 'Conservative Strategy', ConservativeStrategy),
+        '4': ('BalancedStrategy', 'Balanced Strategy', BalancedStrategy),
+        '5': ('MyStrategy', 'My Strategy', MyStrategy),
+        '6': ('TestStrategy', 'Test Strategy', TestStrategy),
+        '7': ('OptimalStrategy', 'Optimal Strategy', OptimalStrategy),
+        '8': ('PowerGridMasterStrategy', 'PowerGridMaster Strategy', PowerGridMasterStrategy),
+        '9': ('MyMightyStrategy', 'My Mighty Strategy', MyMightyStrategy),
+        '10': ('SmartTriggerStrategy', 'Smart Trigger Strategy', SmartTriggerStrategy)
+    }
+    
+    print("\n" + "=" * 60)
+    print("Available Strategies:")
+    print("=" * 60)
+    for key, (_, name, _) in sorted(available_strategies.items()):
+        print(f"  {key}. {name}")
+    print("=" * 60)
+    
+    selected_strategies = []
+    selected_names = []
+    
+    for i in range(num_strategies):
+        while True:
+            choice = input(f"\nSelect strategy {i+1}/{num_strategies} (1-10): ").strip()
+            if choice in available_strategies:
+                _, name, strategy_class = available_strategies[choice]
+                selected_strategies.append(strategy_class())
+                selected_names.append(name)
+                print(f"  Strategy {i+1}: {name}")
+                break
+            else:
+                print(f"Invalid choice. Please enter a number between 1 and 10.")
+    
+    return selected_strategies, selected_names
+
+
+def run_multi_game_competition(strategies, strategy_names, num_games_per_combination=500):
+    """Run multi-game competition across all combinations of 4 strategies from 8 selected strategies"""
+    # Initialize stats dictionary keyed by strategy name
+    stats = {name: {
+        'wins': 0,
+        'games_played': 0,
+        'total_cities_powered': 0,
+        'total_cities_connected': 0,
+        'total_money': 0
+    } for name in strategy_names}
+    
+    # Generate all combinations (8 choose 4 = 70)
+    all_combinations = list(combinations(range(8), 4))
+    num_combinations = len(all_combinations)
+    total_games = num_combinations * num_games_per_combination
+    
+    print("\n" + "=" * 60)
+    print("Multi-Game Strategy Competition")
+    print("=" * 60)
+    print(f"Strategies: {', '.join(strategy_names)}")
+    print(f"Number of combinations: {num_combinations}")
+    print(f"Games per combination: {num_games_per_combination}")
+    print(f"Total games: {total_games}")
+    print("=" * 60)
+    
+    # Iterate through each combination
+    for combo_idx, combo in enumerate(all_combinations, 1):
+        # Get strategies and names for this combination
+        combo_strategies = [strategies[i] for i in combo]
+        combo_names = [strategy_names[i] for i in combo]
+        
+        # Create mapping from player index to strategy name
+        player_to_strategy = {i: combo_names[i] for i in range(4)}
+        
+        # Display progress
+        print(f"\nCombination {combo_idx}/{num_combinations}: {', '.join(combo_names)}")
+        print(f"Running {num_games_per_combination} games...")
+        
+        # Run games for this combination
+        for game_num in range(1, num_games_per_combination + 1):
+            if game_num % 50 == 0 or game_num == 1:
+                print(f"  Game {game_num}/{num_games_per_combination}...", end='\r')
+            
+            winner, final_stats = run_single_game(
+                num_players=4,
+                strategies=combo_strategies,
+                strategy_names=combo_names,
+                verbose=False,
+                enable_logging=False
+            )
+            
+            # Update statistics by strategy name (not player index)
+            for player_idx, player_stats in enumerate(final_stats):
+                strategy_name = player_to_strategy[player_idx]
+                stats[strategy_name]['games_played'] += 1
+                if player_stats['winner']:
+                    stats[strategy_name]['wins'] += 1
+                stats[strategy_name]['total_cities_powered'] += player_stats['cities_powered']
+                stats[strategy_name]['total_cities_connected'] += player_stats['cities_connected']
+                stats[strategy_name]['total_money'] += player_stats['money']
+        
+        print(f"  Completed {num_games_per_combination} games" + " " * 20)  # Clear progress line
+    
+    # Calculate final statistics
+    final_results = {}
+    for strategy_name, strategy_stats in stats.items():
+        games_played = strategy_stats['games_played']
+        if games_played > 0:
+            final_results[strategy_name] = {
+                'wins': strategy_stats['wins'],
+                'games_played': games_played,
+                'win_rate': strategy_stats['wins'] / games_played,
+                'avg_cities_powered': strategy_stats['total_cities_powered'] / games_played,
+                'avg_cities_connected': strategy_stats['total_cities_connected'] / games_played,
+                'avg_money': strategy_stats['total_money'] / games_played
+            }
+        else:
+            final_results[strategy_name] = {
+                'wins': 0,
+                'games_played': 0,
+                'win_rate': 0.0,
+                'avg_cities_powered': 0.0,
+                'avg_cities_connected': 0.0,
+                'avg_money': 0.0
+            }
+    
+    # Save results to JSON file
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"competition_results_{timestamp}.json"
+    
+    output_data = {
+        'timestamp': datetime.now().isoformat(),
+        'num_combinations': num_combinations,
+        'games_per_combination': num_games_per_combination,
+        'total_games': total_games,
+        'strategies': final_results
+    }
+    
+    with open(filename, 'w') as f:
+        json.dump(output_data, f, indent=2)
+    
+    print(f"\nResults saved to: {filename}")
+    
+    # Display results
+    print("\n" + "=" * 60)
+    print("Multi-Game Competition Results")
+    print("=" * 60)
+    print(f"{'Strategy Name':<30} {'Wins':<8} {'Win%':<8} {'Avg Cities Powered':<20} {'Avg Cities Connected':<22} {'Avg Money':<10}")
+    print("-" * 100)
+    
+    # Sort by win rate (descending)
+    sorted_results = sorted(final_results.items(), key=lambda x: x[1]['win_rate'], reverse=True)
+    
+    for strategy_name, results in sorted_results:
+        print(f"{strategy_name:<30} {results['wins']:<8} {results['win_rate']*100:>6.1f}%  "
+              f"{results['avg_cities_powered']:>18.1f}  {results['avg_cities_connected']:>20.1f}  "
+              f"{results['avg_money']:>8.0f}E")
+    
+    print("=" * 60)
+    
+    return final_results
+
+
 def main():
-    """Run games with 4 test players - single game or tournament mode"""
+    """Run games with 4 test players - single game, tournament, or competition mode"""
     import sys
     
-    # Check if tournament mode requested
-    num_games = 1
-    if len(sys.argv) > 1:
-        try:
-            num_games = int(sys.argv[1])
-            if num_games < 1 or num_games > 500:
-                print("Error: Number of games must be between 1 and 500")
-                return
-        except ValueError:
-            print("Error: Number of games must be an integer")
-            return
+    # Prompt user for game mode
+    print("\n" + "=" * 60)
+    print("Power Grid Simulation - Game Mode Selection")
+    print("=" * 60)
+    print("1. Single Game Mode")
+    print("2. Tournament Mode (multiple games with same 4 strategies)")
+    print("3. Multi-Game Competition Mode (8 strategies, all combinations)")
+    print("=" * 60)
+    
+    while True:
+        mode_choice = input("\nSelect game mode (1-3): ").strip()
+        if mode_choice in ['1', '2', '3']:
+            break
+        else:
+            print("Invalid choice. Please enter 1, 2, or 3.")
     
     num_players = 4
     
-    # Define strategies (same for all games)
-    strategies = [
-        MyStrategy(),
-        BalancedStrategy(),
-        MyStrategy(),
-        BalancedStrategy()
-    ]
+    # Get number of games for tournament mode
+    num_games = 1
+    if mode_choice == '2':
+        # Check if provided via command line (backward compatibility)
+        if len(sys.argv) > 1:
+            try:
+                num_games = int(sys.argv[1])
+                if num_games < 1 or num_games > 500:
+                    print("Error: Number of games must be between 1 and 500")
+                    return
+            except ValueError:
+                print("Error: Number of games must be an integer")
+                return
+        else:
+            # Prompt user for number of games
+            while True:
+                try:
+                    num_games_input = input("\nEnter number of games to run (1-500): ").strip()
+                    num_games = int(num_games_input)
+                    if 1 <= num_games <= 500:
+                        break
+                    else:
+                        print("Error: Number of games must be between 1 and 500")
+                except ValueError:
+                    print("Error: Please enter a valid integer")
+    
+    # Prompt user to select strategies based on mode
+    if mode_choice == '3':
+        # Competition mode: select 8 strategies
+        print("\n" + "=" * 60)
+        print("Multi-Game Competition Mode")
+        print("=" * 60)
+        print("Select 8 strategies to compete in all possible 4-player combinations")
+        print("(70 combinations total, 500 games per combination)")
+        print("=" * 60)
+        strategies, strategy_names = select_strategies(num_strategies=8)
+    else:
+        # Single game or tournament mode: select 4 strategies
+        strategies, strategy_names = select_strategies(num_strategies=4)
 
-    strategy_names = ['my strategy 1', 'Balanced Strategy', 'My Strategy 2', 'Balanced Strategy']
-
-    if num_games == 1:
+    if mode_choice == '3':
+        # Multi-game competition mode
+        run_multi_game_competition(strategies, strategy_names, num_games_per_combination=500)
+    elif num_games == 1:
         # Single game mode - verbose output
         print("=" * 60)
         print("Power Grid Simulation")
@@ -260,7 +462,7 @@ def main():
         print(f"\n{'='*60}")
         print(f"Game finished! Winner: Player {winner} ({strategy_names[winner]})")
         print(f"{'='*60}")
-    else:
+    elif mode_choice == '2':
         # Tournament mode - suppress output
         print("=" * 60)
         print(f"Power Grid Tournament - Running {num_games} games")
