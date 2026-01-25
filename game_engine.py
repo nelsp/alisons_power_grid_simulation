@@ -263,6 +263,9 @@ class GameEngine:
 
         if verbose:
             print("\n--- AUCTION PHASE ---")
+            # Debug: Show current market at start of auction
+            print(f"  Current market: {[p.cost for p in self.game_state.current_market]}")
+            print(f"  Future market: {[p.cost for p in self.game_state.future_market]}")
 
         # Continue until all players have bought or passed
         while len(players_who_bought) + len(players_who_passed) < len(self.players):
@@ -736,6 +739,10 @@ class GameEngine:
 
         # Update market
         self.update_market_after_purchase()
+        
+        # Debug: Show market after update
+        if verbose:
+            print(f"  After market update - Current: {[p.cost for p in self.game_state.current_market]}, Future: {[p.cost for p in self.game_state.future_market]}")
 
         # Log state
         if self.enable_logging:
@@ -789,13 +796,16 @@ class GameEngine:
             # Steps 1 & 2: Combine, fill, sort, then split into 4 current + 4 future
             all_plants = self.game_state.current_market + self.game_state.future_market
 
-            # Fill from deck until we have 8 plants
-            while len(all_plants) < 9:
-                new_plant = self.draw_next_plant()
-                if new_plant:
-                    all_plants.append(new_plant)
-                else:
-                    break
+            # IMPORTANT: In Round 1, do NOT draw from deck - only use the initial 9 dark cards
+            # Only draw from deck starting in Round 2
+            if self.game_state.round_num > 1:
+                # Fill from deck until we have 9 plants (only after round 1)
+                while len(all_plants) < 9:
+                    new_plant = self.draw_next_plant()
+                    if new_plant:
+                        all_plants.append(new_plant)
+                    else:
+                        break
 
             # Sort all plants by cost
             all_plants.sort(key=lambda c: c.cost)
@@ -804,7 +814,7 @@ class GameEngine:
             self.game_state.current_market = all_plants[:4]
             self.game_state.future_market = all_plants[4:]
 
-            # If we have more than 8 total, move largest from future to bottom of deck
+            # If we have more than 9 total (shouldn't happen in round 1), move largest from future to bottom of deck
             while len(self.game_state.future_market) > 5:
                 largest = self.game_state.future_market.pop()
                 self.game_state.deck.append(largest)
@@ -982,10 +992,11 @@ class GameEngine:
                                 self.logger.log_state(self.game_state,
                                     description=f"round_{self.game_state.round_num}_player_{player_idx}_built_in_{city_name}")
 
-                            # Check if game should end immediately (player reached 18 cities)
-                            if len(player.generators) >= 17:
+                            # Check if game should end immediately (player reached threshold)
+                            threshold = 17 if self.num_players == 4 else 18
+                            if len(player.generators) >= threshold:
                                 if verbose:
-                                    print(f"\nPlayer {player_idx} reached 18 cities! Game ending immediately.")
+                                    print(f"\nPlayer {player_idx} reached {threshold} cities! Game ending immediately.")
                                 if self.enable_logging:
                                     self.logger.log_state(self.game_state, description="game_end_condition_triggered")
                                 self.game_state.game_over = True
@@ -1294,9 +1305,13 @@ class GameEngine:
             self.game_state.future_market = []
     
     def check_end_game(self):
-        """Check if game should end (18+ cities)"""
+        """Check if game should end (17 cities for 4 players, 18 for others)"""
+        # Game ends when a player reaches the threshold based on number of players
+        # 4 players: 17 cities, 5-6 players: 18 cities
+        threshold = 17 if self.num_players == 4 else 18
+        
         for player in self.players:
-            if len(player.generators) >= 18:
+            if len(player.generators) >= threshold:
                 self.game_state.game_over = True
                 return True
         return False

@@ -10,6 +10,16 @@ class Card:
     if self.cost < 16:
       self.type = 'dark'
 
+  def __eq__(self, other):
+    """Cards are equal if they have the same cost (plant number)"""
+    if not isinstance(other, Card):
+      return False
+    return self.cost == other.cost
+
+  def __hash__(self):
+    """Hash based on cost (plant number)"""
+    return hash(self.cost)
+
   def __repr__(self):
     return """
     ##########################
