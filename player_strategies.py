@@ -664,17 +664,114 @@ class ConservativeStrategy(Strategy):  # MyStrategy base - with fixes
         self.endgame_threshold = 17  # 4p Europe
 
     def choose_auction_move(self, player, game_state):
-        # [Keep existing or placeholder - focus on build fixes]
-        pass  # Implement as before
+        """Conservative: Only buy when necessary or excellent value"""
+        available_plants = game_state.current_market
+        must_buy = (game_state.round_num == 1)
+
+        if not available_plants or not StrategyUtils.can_buy_plant(player):
+            return PlayerAction.auction_pass()
+
+        affordable = StrategyUtils.get_affordable_plants(player, available_plants)
+        if not affordable:
+            return PlayerAction.auction_pass()
+
+        # Must buy in round 1 - choose cheapest efficient plant
+        if must_buy:
+            # Prefer plants with good efficiency (cities per cost)
+            best_plant = max(affordable, key=lambda p: p.cities / float(p.cost) if p.cost > 0 else 0)
+            discard = min(player.cards, key=lambda c: c.cost) if len(player.cards) >= 3 else None
+            return PlayerAction.auction_open(best_plant, best_plant.cost, discard)
+
+        # Conservative: Only buy if plant is very efficient and affordable
+        # Look for plants with efficiency > 0.3 (cities/cost)
+        efficient_plants = [p for p in affordable if p.cost > 0 and p.cities / float(p.cost) > 0.3]
+        
+        if not efficient_plants:
+            return PlayerAction.auction_pass()
+
+        # Choose most efficient plant, but bid conservatively (at cost)
+        best_plant = max(efficient_plants, key=lambda p: p.cities / float(p.cost) if p.cost > 0 else 0)
+        discard = min(player.cards, key=lambda c: c.cost) if len(player.cards) >= 3 else None
+        
+        # Only bid if we have plenty of money (conservative)
+        if player.money >= best_plant.cost * 2:
+            return PlayerAction.auction_open(best_plant, best_plant.cost, discard)
+        
+        return PlayerAction.auction_pass()
 
     def bid_in_auction(self, player, game_state, plant, current_bid, current_winner):
-        # [Keep existing]
-        pass
+        """Conservative: Only bid on very efficient plants"""
+        min_bid = current_bid + 1
+        max_bid = player.money
+
+        if min_bid > max_bid:
+            return PlayerAction.auction_bid_pass()
+
+        # Only bid if plant is very efficient (cities per cost > 0.3)
+        efficiency = plant.cities / float(plant.cost) if plant.cost > 0 else 0
+        if efficiency < 0.3:
+            return PlayerAction.auction_bid_pass()
+
+        # Conservative: Only bid if we have plenty of money left
+        # Don't bid if it would leave us with less than 2x the plant cost
+        if max_bid < min_bid or player.money - min_bid < plant.cost * 2:
+            return PlayerAction.auction_bid_pass()
+
+        # Bid minimum to stay in, but only if very efficient
+        if efficiency > 0.4:
+            discard = min(player.cards, key=lambda c: c.cost) if len(player.cards) >= 3 else None
+            return PlayerAction.auction_bid(min_bid, discard)
+        
+        return PlayerAction.auction_bid_pass()
 
     def choose_resources(self, player, game_state):
-        # [Keep existing snippet logic]
+        """Conservative: Buy resources conservatively, just enough to power plants"""
+        resources = game_state.resources
         purchases = {}
-        # ... (your existing code)
+        capacities = StrategyUtils.get_resource_capacities(player)
+
+        # Buy resources for each plant, but conservatively
+        for card in player.cards:
+            if card.resource == 'green':
+                continue
+
+            resource_type = card.resource
+            if resource_type == 'nuclear':
+                resource_type = 'uranium'
+            elif resource_type == 'oil&gas':
+                # Choose cheaper resource
+                if 'oil' in resources and 'gas' in resources:
+                    oil_cost = StrategyUtils.get_resource_cost(resources['oil'], 1)
+                    gas_cost = StrategyUtils.get_resource_cost(resources['gas'], 1)
+                    resource_type = 'oil' if oil_cost and gas_cost and oil_cost <= gas_cost else 'gas'
+                elif 'oil' in resources:
+                    resource_type = 'oil'
+                elif 'gas' in resources:
+                    resource_type = 'gas'
+                else:
+                    continue
+
+            if resource_type in resources:
+                current = player.resources.get(resource_type, 0)
+                max_capacity = capacities[resource_type]
+                space_available = max_capacity - current
+
+                if space_available <= 0:
+                    continue
+
+                # Conservative: Buy just enough for one turn (resource_cost amount)
+                already_buying = purchases.get(resource_type, 0)
+                can_buy = max_capacity - current - already_buying
+                desired = card.resource_cost  # Just buy what's needed for one turn
+                amount_to_buy = min(desired, can_buy, space_available)
+
+                if amount_to_buy > 0:
+                    available_amount = resources[resource_type].count
+                    if available_amount >= amount_to_buy:
+                        cost = StrategyUtils.get_resource_cost(resources[resource_type], amount_to_buy)
+                        if cost and player.money >= cost:
+                            purchases[resource_type] = purchases.get(resource_type, 0) + amount_to_buy
+
         return PlayerAction.resource_purchase(purchases)
 
     def choose_cities_to_build(self, player, game_state):
@@ -742,6 +839,16 @@ class ConservativeStrategy(Strategy):  # MyStrategy base - with fixes
         return PlayerAction.power_cities(max_powerable)
 
     # FIXED Helpers
+    def get_endgame_threshold(self, num_players):
+        """Get endgame threshold based on number of players"""
+        thresholds = {
+            3: 21,
+            4: 17,
+            5: 15,
+            6: 14
+        }
+        return thresholds.get(num_players, 17)  # Default to 17 for 4 players
+
     def is_near_endgame(self, game_state):
         max_cities = max(len(p.generators) for p in game_state.players)
         return max_cities >= 7  # Earlier trigger
@@ -769,7 +876,7 @@ class ConservativeStrategy(Strategy):  # MyStrategy base - with fixes
                 to_build.append(city)
                 budget -= cost
 
-        return to_build  # Return list for PlayerAction
+        return PlayerAction.city_build(to_build)  # Return PlayerAction
 
     # [Keep other helpers like evaluate_plant, get_endgame_threshold, etc.]
 
