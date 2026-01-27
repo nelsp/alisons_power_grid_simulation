@@ -102,6 +102,8 @@ class GameEngine:
     def __init__(self, players, current_market, future_market, deck, board_graph, resources, player_order, num_players, enable_logging=False, game_id=None, log_file=None):
         self.num_players = num_players
         self.players = players
+        # Track resources consumed per player in the most recent bureaucracy phase
+        self.last_resources_consumed = {i: {} for i in range(len(players))}
         self.game_state = GameState(
             players=players,
             current_market=sorted(current_market, key=lambda c: c.cost),
@@ -1101,7 +1103,7 @@ class GameEngine:
                 cities_to_power = max_cities
 
             # Validate: check if player has resources to power that many
-            actual_powered = self.validate_and_power_cities(player, cities_to_power, verbose)
+            actual_powered = self.validate_and_power_cities(player, cities_to_power, verbose, player_idx=player_idx)
 
             payment = PAYMENT_TABLE.get(actual_powered, 0)
             player.update_money(payment)
@@ -1164,7 +1166,7 @@ class GameEngine:
 
         self.game_state.phase = 'determine_order'
     
-    def validate_and_power_cities(self, player, requested_cities, verbose=False):
+    def validate_and_power_cities(self, player, requested_cities, verbose=False, player_idx=None):
         """Validate player can power requested cities and consume resources
 
         Returns: Number of cities actually powered (may be less than requested)
@@ -1179,7 +1181,7 @@ class GameEngine:
             print(f"  Requested {requested_cities} but can only power {cities_to_power} with available resources")
 
         # Consume resources
-        self.consume_resources_for_power(player, cities_to_power)
+        self.consume_resources_for_power(player, cities_to_power, player_idx=player_idx)
 
         return cities_to_power
 
@@ -1212,9 +1214,18 @@ class GameEngine:
         # Can only power as many cities as connected
         return min(cities_connected, total_power)
     
-    def consume_resources_for_power(self, player, cities_to_power):
+    def calculate_max_power_capacity(self, player):
+        """Calculate the maximum cities a player's plants could power if fully fueled (ignoring current resources)"""
+        return sum(card.cities for card in player.cards)
+
+    def consume_resources_for_power(self, player, cities_to_power, player_idx=None):
         """Consume resources to power the specified number of cities"""
+        # Snapshot resources before consumption for tracking
+        resources_before = dict(player.resources)
+
         if cities_to_power == 0:
+            if player_idx is not None:
+                self.last_resources_consumed[player_idx] = {r: 0 for r in ['coal', 'oil', 'gas', 'uranium']}
             return
         
         # Sort plants by efficiency (cities per resource cost), prefer green
@@ -1271,7 +1282,14 @@ class GameEngine:
                     self.game_state.resources[resource_type].use_resource(cost)
                 
                 cities_powered += card.cities
-    
+
+        # Record resources consumed
+        if player_idx is not None:
+            self.last_resources_consumed[player_idx] = {
+                r: resources_before[r] - player.resources[r]
+                for r in ['coal', 'oil', 'gas', 'uranium']
+            }
+
     def check_step_transitions(self, verbose):
         """Check and handle step transitions"""
         # Step 1 -> Step 2
