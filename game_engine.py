@@ -798,16 +798,13 @@ class GameEngine:
             # Steps 1 & 2: Combine, fill, sort, then split into 4 current + 4 future
             all_plants = self.game_state.current_market + self.game_state.future_market
 
-            # IMPORTANT: In Round 1, do NOT draw from deck - only use the initial 9 dark cards
-            # Only draw from deck starting in Round 2
-            if self.game_state.round_num > 1:
-                # Fill from deck until we have 9 plants (only after round 1)
-                while len(all_plants) < 9:
-                    new_plant = self.draw_next_plant()
-                    if new_plant:
-                        all_plants.append(new_plant)
-                    else:
-                        break
+            # Draw from deck to fill back to 9 plants after a purchase
+            while len(all_plants) < 9:
+                new_plant = self.draw_next_plant()
+                if new_plant:
+                    all_plants.append(new_plant)
+                else:
+                    break
 
             # Sort all plants by cost
             all_plants.sort(key=lambda c: c.cost)
