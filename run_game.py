@@ -17,6 +17,7 @@ import create_use_resources as res
 from game_engine import GameEngine
 from player_strategies import RandomStrategy, GreedyStrategy, ConservativeStrategy, BalancedStrategy, MyStrategy, TestStrategy, OptimalStrategy, PowerGridMasterStrategy, MyMightyStrategy, SmartTriggerStrategy
 from endgame_sniper import EndgameSniper
+from kris import Kris
 # Europe color connections
 eur_areas = [('brown', 'red'), ('brown', 'purple'), ('brown', 'yellow'), ('brown', 'green'), 
              ('brown', 'orange'), ('purple', 'red'), ('red', 'yellow'), ('yellow', 'blue'), 
@@ -209,11 +210,17 @@ def run_single_game(num_players, strategies, strategy_names, verbose=True, enabl
         cities_powered = engine.calculate_cities_powered(player)
         cities_connected = len(player.generators)
         money = player.money
+        max_power_capacity = engine.calculate_max_power_capacity(player)
+        resources_remaining = sum(player.resources.values())
+        resources_spent_last_turn = sum(engine.last_resources_consumed.get(player_idx, {}).values())
         final_stats.append({
             'winner': (player_idx == winner),
             'cities_powered': cities_powered,
             'cities_connected': cities_connected,
-            'money': money
+            'money': money,
+            'max_power_capacity': max_power_capacity,
+            'resources_remaining': resources_remaining,
+            'resources_spent_last_turn': resources_spent_last_turn
         })
 
     return winner, final_stats
@@ -233,7 +240,8 @@ def select_strategies(num_strategies=4):
         '8': ('PowerGridMasterStrategy', 'PowerGridMaster Strategy', PowerGridMasterStrategy),
         '9': ('MyMightyStrategy', 'My Mighty Strategy', MyMightyStrategy),
         '10': ('SmartTriggerStrategy', 'Smart Trigger Strategy', SmartTriggerStrategy),
-        '11': ('EndgameSniper', 'Endgame Sniper', EndgameSniper)
+        '11': ('EndgameSniper', 'Endgame Sniper', EndgameSniper),
+        '12': ('Kris', 'Kris', Kris)
     }
     
     print("\n" + "=" * 60)
@@ -248,7 +256,7 @@ def select_strategies(num_strategies=4):
     
     for i in range(num_strategies):
         while True:
-            choice = input(f"\nSelect strategy {i+1}/{num_strategies} (1-11): ").strip()
+            choice = input(f"\nSelect strategy {i+1}/{num_strategies} (1-12):").strip()
             if choice in available_strategies:
                 _, name, strategy_class = available_strategies[choice]
                 selected_strategies.append(strategy_class())
@@ -256,27 +264,34 @@ def select_strategies(num_strategies=4):
                 print(f"  Strategy {i+1}: {name}")
                 break
             else:
-                print(f"Invalid choice. Please enter a number between 1 and 11.")
+                print(f"Invalid choice. Please enter a number between 1 and 12.")
     
     return selected_strategies, selected_names
 
 
 def run_multi_game_competition(strategies, strategy_names, num_games_per_combination=500):
     """Run multi-game competition across all combinations of 4 strategies from 8 selected strategies"""
-    # Initialize stats dictionary keyed by strategy name
-    stats = {name: {
-        'wins': 0,
-        'games_played': 0,
-        'total_cities_powered': 0,
-        'total_cities_connected': 0,
-        'total_money': 0
-    } for name in strategy_names}
-    
+    stat_fields = ['cities_powered', 'cities_connected', 'money', 'max_power_capacity',
+                   'resources_remaining', 'resources_spent_last_turn']
+
+    # Initialize stats dictionary keyed by strategy name, split by won/lost
+    stats = {}
+    for name in strategy_names:
+        stats[name] = {
+            'wins': 0,
+            'games_played': 0,
+            'won': {f: 0 for f in stat_fields},
+            'won_count': 0,
+            'lost': {f: 0 for f in stat_fields},
+            'lost_count': 0,
+            'all': {f: 0 for f in stat_fields},
+        }
+
     # Generate all combinations (8 choose 4 = 70)
     all_combinations = list(combinations(range(8), 4))
     num_combinations = len(all_combinations)
     total_games = num_combinations * num_games_per_combination
-    
+
     print("\n" + "=" * 60)
     print("Multi-Game Strategy Competition")
     print("=" * 60)
@@ -285,25 +300,20 @@ def run_multi_game_competition(strategies, strategy_names, num_games_per_combina
     print(f"Games per combination: {num_games_per_combination}")
     print(f"Total games: {total_games}")
     print("=" * 60)
-    
+
     # Iterate through each combination
     for combo_idx, combo in enumerate(all_combinations, 1):
-        # Get strategies and names for this combination
         combo_strategies = [strategies[i] for i in combo]
         combo_names = [strategy_names[i] for i in combo]
-        
-        # Create mapping from player index to strategy name
         player_to_strategy = {i: combo_names[i] for i in range(4)}
-        
-        # Display progress
+
         print(f"\nCombination {combo_idx}/{num_combinations}: {', '.join(combo_names)}")
         print(f"Running {num_games_per_combination} games...")
-        
-        # Run games for this combination
+
         for game_num in range(1, num_games_per_combination + 1):
             if game_num % 50 == 0 or game_num == 1:
                 print(f"  Game {game_num}/{num_games_per_combination}...", end='\r')
-            
+
             winner, final_stats = run_single_game(
                 num_players=4,
                 strategies=combo_strategies,
@@ -311,46 +321,44 @@ def run_multi_game_competition(strategies, strategy_names, num_games_per_combina
                 verbose=False,
                 enable_logging=False
             )
-            
-            # Update statistics by strategy name (not player index)
+
             for player_idx, player_stats in enumerate(final_stats):
                 strategy_name = player_to_strategy[player_idx]
-                stats[strategy_name]['games_played'] += 1
-                if player_stats['winner']:
-                    stats[strategy_name]['wins'] += 1
-                stats[strategy_name]['total_cities_powered'] += player_stats['cities_powered']
-                stats[strategy_name]['total_cities_connected'] += player_stats['cities_connected']
-                stats[strategy_name]['total_money'] += player_stats['money']
-        
-        print(f"  Completed {num_games_per_combination} games" + " " * 20)  # Clear progress line
-    
-    # Calculate final statistics
-    final_results = {}
-    for strategy_name, strategy_stats in stats.items():
-        games_played = strategy_stats['games_played']
-        if games_played > 0:
-            final_results[strategy_name] = {
-                'wins': strategy_stats['wins'],
-                'games_played': games_played,
-                'win_rate': strategy_stats['wins'] / games_played,
-                'avg_cities_powered': strategy_stats['total_cities_powered'] / games_played,
-                'avg_cities_connected': strategy_stats['total_cities_connected'] / games_played,
-                'avg_money': strategy_stats['total_money'] / games_played
-            }
-        else:
-            final_results[strategy_name] = {
-                'wins': 0,
-                'games_played': 0,
-                'win_rate': 0.0,
-                'avg_cities_powered': 0.0,
-                'avg_cities_connected': 0.0,
-                'avg_money': 0.0
-            }
-    
+                s = stats[strategy_name]
+                s['games_played'] += 1
+                is_winner = player_stats['winner']
+                if is_winner:
+                    s['wins'] += 1
+                    s['won_count'] += 1
+                    bucket = 'won'
+                else:
+                    s['lost_count'] += 1
+                    bucket = 'lost'
+
+                for f in stat_fields:
+                    s[bucket][f] += player_stats[f]
+                    s['all'][f] += player_stats[f]
+
+        print(f"  Completed {num_games_per_combination} games" + " " * 20)
+
     # Save results to JSON file
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"competition_results_{timestamp}.json"
-    
+
+    # Build JSON-friendly results
+    final_results = {}
+    for name, s in stats.items():
+        gp = s['games_played']
+        final_results[name] = {
+            'wins': s['wins'],
+            'games_played': gp,
+            'win_rate': s['wins'] / gp if gp > 0 else 0.0,
+        }
+        for f in stat_fields:
+            final_results[name][f'avg_{f}'] = _avg(s['all'][f], gp)
+            final_results[name][f'avg_{f}_won'] = _avg(s['won'][f], s['won_count'])
+            final_results[name][f'avg_{f}_lost'] = _avg(s['lost'][f], s['lost_count'])
+
     output_data = {
         'timestamp': datetime.now().isoformat(),
         'num_combinations': num_combinations,
@@ -358,30 +366,118 @@ def run_multi_game_competition(strategies, strategy_names, num_games_per_combina
         'total_games': total_games,
         'strategies': final_results
     }
-    
+
     with open(filename, 'w') as f:
         json.dump(output_data, f, indent=2)
-    
+
     print(f"\nResults saved to: {filename}")
-    
+
     # Display results
-    print("\n" + "=" * 60)
-    print("Multi-Game Competition Results")
-    print("=" * 60)
-    print(f"{'Strategy Name':<30} {'Wins':<8} {'Win%':<8} {'Avg Cities Powered':<20} {'Avg Cities Connected':<22} {'Avg Money':<10}")
-    print("-" * 100)
-    
+    header = (f"  {'Category':<14} {'Avg Pwrd':>8}  {'Avg Connd':>9}  {'Avg E':>7}  "
+              f"{'Max Power':>9}  {'Res Left':>8}  {'Res Used':>8}")
+    separator = "  " + "-" * 75
+
     # Sort by win rate (descending)
-    sorted_results = sorted(final_results.items(), key=lambda x: x[1]['win_rate'], reverse=True)
-    
-    for strategy_name, results in sorted_results:
-        print(f"{strategy_name:<30} {results['wins']:<8} {results['win_rate']*100:>6.1f}%  "
-              f"{results['avg_cities_powered']:>18.1f}  {results['avg_cities_connected']:>20.1f}  "
-              f"{results['avg_money']:>8.0f}E")
-    
-    print("=" * 60)
-    
+    sorted_names = sorted(stats.keys(), key=lambda n: stats[n]['wins'] / max(stats[n]['games_played'], 1), reverse=True)
+
+    for name in sorted_names:
+        s = stats[name]
+        gp = s['games_played']
+        wins = s['wins']
+        losses = gp - wins
+        win_pct = (wins / gp * 100) if gp > 0 else 0.0
+
+        print(f"\n{'=' * 79}")
+        print(f"{name} — {wins} wins / {gp} games ({win_pct:.1f}%)")
+        print(f"{'=' * 79}")
+        print(header)
+        print(separator)
+        print_detailed_stats("Overall", s['all'], gp)
+        print_detailed_stats(f"Wins ({wins})", s['won'], s['won_count'])
+        print_detailed_stats(f"Losses ({losses})", s['lost'], s['lost_count'])
+
+    # Overall summary
+    print(f"\n{'=' * 79}")
+    print("Overall Stats (all strategies combined)")
+    print(f"{'=' * 79}")
+    print(header)
+    print(separator)
+    all_totals = {f: sum(stats[n]['all'][f] for n in strategy_names) for f in stat_fields}
+    won_totals = {f: sum(stats[n]['won'][f] for n in strategy_names) for f in stat_fields}
+    lost_totals = {f: sum(stats[n]['lost'][f] for n in strategy_names) for f in stat_fields}
+    total_entries = sum(stats[n]['games_played'] for n in strategy_names)
+    total_wins = sum(stats[n]['wins'] for n in strategy_names)
+    total_losses = total_entries - total_wins
+    print_detailed_stats("Overall", all_totals, total_entries)
+    print_detailed_stats(f"Wins ({total_wins})", won_totals, total_wins)
+    print_detailed_stats(f"Losses ({total_losses})", lost_totals, total_losses)
+    print(f"{'=' * 79}")
+
     return final_results
+
+
+def _avg(total, count):
+    """Safe average"""
+    return total / count if count > 0 else 0.0
+
+
+def print_detailed_stats(label, totals, count):
+    """Print a row of detailed stats"""
+    if count == 0:
+        print(f"  {label:<14} {'N/A':>8}  {'N/A':>9}  {'N/A':>7}  {'N/A':>9}  {'N/A':>8}  {'N/A':>8}")
+        return
+    print(f"  {label:<14} "
+          f"{_avg(totals['cities_powered'], count):>8.1f}  "
+          f"{_avg(totals['cities_connected'], count):>9.1f}  "
+          f"{_avg(totals['money'], count):>7.0f}  "
+          f"{_avg(totals['max_power_capacity'], count):>9.1f}  "
+          f"{_avg(totals['resources_remaining'], count):>8.1f}  "
+          f"{_avg(totals['resources_spent_last_turn'], count):>8.1f}")
+
+
+def print_tournament_results(stats, num_players, num_games, strategy_names):
+    """Print detailed tournament results split by won/not-won"""
+    header = (f"  {'Category':<14} {'Avg Pwrd':>8}  {'Avg Connd':>9}  {'Avg E':>7}  "
+              f"{'Max Power':>9}  {'Res Left':>8}  {'Res Used':>8}")
+    separator = "  " + "-" * 75
+
+    # Per-player stats
+    for player_idx in range(num_players):
+        s = stats[player_idx]
+        wins = s['wins']
+        losses = s['games'] - wins
+        win_pct = (wins / s['games'] * 100) if s['games'] > 0 else 0.0
+
+        print(f"\n{'=' * 79}")
+        print(f"Player {player_idx} ({strategy_names[player_idx]}) — "
+              f"{wins} wins / {s['games']} games ({win_pct:.1f}%)")
+        print(f"{'=' * 79}")
+        print(header)
+        print(separator)
+        print_detailed_stats("Overall", s['all'], s['games'])
+        print_detailed_stats(f"Wins ({wins})", s['won'], s['won_count'])
+        print_detailed_stats(f"Losses ({losses})", s['lost'], s['lost_count'])
+
+    # Overall stats (across all players)
+    print(f"\n{'=' * 79}")
+    print(f"Overall Stats (all players combined)")
+    print(f"{'=' * 79}")
+    print(header)
+    print(separator)
+    all_totals = {f: sum(stats[i]['all'][f] for i in range(num_players))
+                  for f in ['cities_powered', 'cities_connected', 'money',
+                            'max_power_capacity', 'resources_remaining', 'resources_spent_last_turn']}
+    total_entries = num_games * num_players
+    won_totals = {f: sum(stats[i]['won'][f] for i in range(num_players))
+                  for f in all_totals}
+    lost_totals = {f: sum(stats[i]['lost'][f] for i in range(num_players))
+                   for f in all_totals}
+    total_wins = sum(stats[i]['wins'] for i in range(num_players))
+    total_losses = total_entries - total_wins
+    print_detailed_stats("Overall", all_totals, total_entries)
+    print_detailed_stats(f"Wins ({total_wins})", won_totals, total_wins)
+    print_detailed_stats(f"Losses ({total_losses})", lost_totals, total_losses)
+    print(f"{'=' * 79}")
 
 
 def main():
@@ -471,51 +567,54 @@ def main():
         print("=" * 60)
         print(f"Players: {', '.join([f'P{i}: {strategy_names[i]}' for i in range(num_players)])}\n")
         
-        # Initialize statistics
-        stats = {
-            i: {
+        # Stat fields to track
+        stat_fields = ['cities_powered', 'cities_connected', 'money', 'max_power_capacity',
+                       'resources_remaining', 'resources_spent_last_turn']
+
+        # Initialize statistics per player, split by won/not-won
+        stats = {}
+        for i in range(num_players):
+            stats[i] = {
                 'wins': 0,
-                'total_cities_powered': 0,
-                'total_cities_connected': 0,
-                'total_money': 0
+                'games': 0,
+                'won': {f: 0 for f in stat_fields},
+                'won_count': 0,
+                'lost': {f: 0 for f in stat_fields},
+                'lost_count': 0,
+                'all': {f: 0 for f in stat_fields},
             }
-            for i in range(num_players)
-        }
-        
+
         # Run games
         for game_num in range(1, num_games + 1):
             if game_num % 50 == 0 or game_num == 1:
                 print(f"Running game {game_num}/{num_games}...", end='\r')
-            
+
             winner, final_stats = run_single_game(
                 num_players, strategies, strategy_names,
                 verbose=False, enable_logging=False
             )
-            
+
             # Update statistics
             for player_idx, player_stats in enumerate(final_stats):
-                stats[player_idx]['wins'] += 1 if player_stats['winner'] else 0
-                stats[player_idx]['total_cities_powered'] += player_stats['cities_powered']
-                stats[player_idx]['total_cities_connected'] += player_stats['cities_connected']
-                stats[player_idx]['total_money'] += player_stats['money']
-        
+                s = stats[player_idx]
+                s['games'] += 1
+                is_winner = player_stats['winner']
+                if is_winner:
+                    s['wins'] += 1
+                    s['won_count'] += 1
+                    bucket = 'won'
+                else:
+                    s['lost_count'] += 1
+                    bucket = 'lost'
+
+                for f in stat_fields:
+                    s[bucket][f] += player_stats[f]
+                    s['all'][f] += player_stats[f]
+
         print(f"Completed {num_games} games" + " " * 20)  # Clear the progress line
-        
-        # Calculate and display averages
-        print("\n" + "=" * 60)
-        print("Final Average Scores:")
-        print("=" * 60)
-        
-        for player_idx in range(num_players):
-            wins = stats[player_idx]['wins']
-            avg_cities_powered = stats[player_idx]['total_cities_powered'] / num_games
-            avg_cities_connected = stats[player_idx]['total_cities_connected'] / num_games
-            avg_money = stats[player_idx]['total_money'] / num_games
-            
-            print(f"Player {player_idx}: {wins:3d} wins {avg_cities_powered:.0f} cities powered, "
-                  f"{avg_cities_connected:.0f} cities connected, {avg_money:.0f}E")
-        
-        print("=" * 60)
+
+        # Display results
+        print_tournament_results(stats, num_players, num_games, strategy_names)
 
 
 if __name__ == '__main__':

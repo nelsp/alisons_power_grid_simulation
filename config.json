@@ -247,7 +247,7 @@
       "cities": 5
     }, 
     {
-      "resource_cost": 2, 
+      "resource_cost": 3, 
       "cost": 8, 
       "resource": "oil&gas", 
       "cities": 3
