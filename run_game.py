@@ -16,6 +16,7 @@ from card_setup import market_setup as card_market_setup
 import create_use_resources as res
 from game_engine import GameEngine
 from player_strategies import RandomStrategy, GreedyStrategy, ConservativeStrategy, BalancedStrategy, MyStrategy, TestStrategy, OptimalStrategy, PowerGridMasterStrategy, MyMightyStrategy, SmartTriggerStrategy
+from endgame_sniper import EndgameSniper
 # Europe color connections
 eur_areas = [('brown', 'red'), ('brown', 'purple'), ('brown', 'yellow'), ('brown', 'green'), 
              ('brown', 'orange'), ('purple', 'red'), ('red', 'yellow'), ('yellow', 'blue'), 
@@ -231,7 +232,8 @@ def select_strategies(num_strategies=4):
         '7': ('OptimalStrategy', 'Optimal Strategy', OptimalStrategy),
         '8': ('PowerGridMasterStrategy', 'PowerGridMaster Strategy', PowerGridMasterStrategy),
         '9': ('MyMightyStrategy', 'My Mighty Strategy', MyMightyStrategy),
-        '10': ('SmartTriggerStrategy', 'Smart Trigger Strategy', SmartTriggerStrategy)
+        '10': ('SmartTriggerStrategy', 'Smart Trigger Strategy', SmartTriggerStrategy),
+        '11': ('EndgameSniper', 'Endgame Sniper', EndgameSniper)
     }
     
     print("\n" + "=" * 60)
@@ -246,7 +248,7 @@ def select_strategies(num_strategies=4):
     
     for i in range(num_strategies):
         while True:
-            choice = input(f"\nSelect strategy {i+1}/{num_strategies} (1-10): ").strip()
+            choice = input(f"\nSelect strategy {i+1}/{num_strategies} (1-11): ").strip()
             if choice in available_strategies:
                 _, name, strategy_class = available_strategies[choice]
                 selected_strategies.append(strategy_class())
@@ -254,7 +256,7 @@ def select_strategies(num_strategies=4):
                 print(f"  Strategy {i+1}: {name}")
                 break
             else:
-                print(f"Invalid choice. Please enter a number between 1 and 10.")
+                print(f"Invalid choice. Please enter a number between 1 and 11.")
     
     return selected_strategies, selected_names
 
