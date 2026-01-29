@@ -1,0 +1,56 @@
+name: Power Grid Tournament
+
+on:
+  workflow_dispatch:
+    inputs:
+      games_per_matchup:
+        description: 'Games per matchup'
+        required: true
+        default: '20'
+        type: string
+
+jobs:
+  tournament:
+    runs-on: self-hosted
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Tournament
+        id: tournament
+        run: |
+          python tournament.py --games ${{ github.event.inputs.games_per_matchup || '20' }} --output results.json
+          echo "results<<EOF" >> $GITHUB_OUTPUT
+          cat results.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: tournament-results
+          path: |
+            results.json
+            results.md
+
+      - name: Post to Discord
+        if: success()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          curl -H "Content-Type: application/json" \
+            -d "{\"content\": \"🏆 **Power Grid Tournament Results**\\n\\n$(cat results.md | sed 's/"/\\"/g' | head -c 1900)\"}" \
+            "$DISCORD_WEBHOOK" || true
