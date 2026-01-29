@@ -1,11 +1,6 @@
 name: Power Grid Tournament
 
 on:
-  push:
-    branches: [main, master]
-    paths:
-      - '**.py'
-      - '.github/workflows/tournament.yml'
   workflow_dispatch:
     inputs:
       games_per_matchup:
